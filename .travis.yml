@@ -1,37 +1,70 @@
-# The testing matrix considers ruby/puppet versions supported by SIMP and PE:
+# The testing matrix **for simp-packer** only considers ruby/puppet versions
+# supported by SIMP:
 # ------------------------------------------------------------------------------
-#  release    pup   ruby      eol
-# PE 2016.2   4.5   2.1.9  2017-04-30
-# PE 2016.4   4.7   2.1.9  TBD (LTS)
-# PE 2016.5   4.8   2.1.9  TBD
-# SIMP6.0.0   4.8   2.1.9  TBD
-# PE 2017.1   4.9   2.1.9  TBD
+#  release    pup   ruby   eol
+# SIMP 6.0    4.8   2.1.9  TBD***
+# SIMP 6.2    4.10  2.1.9  TBD
+#
+# *** = Modules created for SIMP 6.2+ are not required to support Puppet < 4.10
 ---
 language: ruby
-sudo: false
 cache: bundler
-before_script:
-  - bundle update
-bundler_args: --without development system_tests
-before_install: rm Gemfile.lock || true
-script:
-  - bundle exec rake test
+sudo: false
+bundler_args: --without development system_tests --path .vendor
 notifications:
   email: false
-rvm:
-  - 2.1.9
-env:
-  global:
-    - STRICT_VARIABLES=yes
-  matrix:
-    - PUPPET_VERSION="~> 4.8.1"
-    - PUPPET_VERSION="~> 4.9.0"
-    - PUPPET_VERSION="~> 4.7.0"
-    # --------------------------- non-critical versions
-    - PUPPET_VERSION="~> 4.10.0"
-    - PUPPET_VERSION="~> 4.5.0"
-matrix:
-  fast_finish: true
+
+stages:
+  - validation
+  - 'Puppet (SIMP versions)'
+  - name: deploy
+    if: 'fork = false AND tag = true'
+
+before_install:
+  - rm -f Gemfile.lock
+  - gem update --system
+
+jobs:
   allow_failures:
-    - env: PUPPET_VERSION="~> 4.10.0"
-    - env: PUPPET_VERSION="~> 4.5.0"
+    - name: 'Latest Puppet 5.x (allowed to fail)'
+
+  include:
+    - stage:  validation
+      name:   Rubocop
+      script: bundle exec rake test:rubocop
+
+    - stage: validation
+      name:  Shellcheck
+      script: bundle exec rake test:shellcheck
+
+    - stage:  'Puppet (SIMP versions)'
+      name:   'Puppet 4.8 (SIMP 6.0–6.1)'
+      rvm:    2.1.9
+      env:    'PUPPET_VERSION="~> 4.8.2"'
+      script: bundle exec rake test:puppet
+
+    - stage:  'Puppet (SIMP versions)'
+      name:   'Puppet 4.10 (SIMP 6.2+)'
+      rvm:    2.1.9
+      env:
+        - 'PUPPET_VERSION="~> 4.10.4"'
+      script: bundle exec rake test:puppet
+
+    - stage:  'Puppet (SIMP versions)'
+      name:   'Latest Puppet 5.x (allowed to fail)'
+      rvm:    2.4.4
+      env:
+        - 'PUPPET_VERSION="~> 5.0"'
+      script: bundle exec rake test:puppet
+
+#    - stage: deploy
+#      script:
+#        - true
+#      deploy:
+#        - provider: releases
+#          on:
+#            tags: true
+#            condition: '($SKIP_FORGE_PUBLISH != true)'
+#          skip_cleanup: true
+#          api_key:
+#            secure: <INSERT KEY HERE>

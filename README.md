@@ -74,7 +74,6 @@ BEAKER_box__puppet="simpci/server-6.2.0-RC1.el7-CentOS-7.0.x86-64" \
   bundle exec rake beaker:suites
 ```
 
-
 #### Alternative
 An alternative method, if you only have a Vagrant `.box` + `.json` file but no
 directory tree set up:
@@ -83,7 +82,6 @@ directory tree set up:
 BEAKER_box__puppet="$direct_path_to/server-6.2.0-RC1.el7-CentOS-7.0.x86-64.json" \
   bundle exec rake beaker:suites
 ```
-
 
 #### Optional settings
 
@@ -104,7 +102,7 @@ Usage:
 
 ```sh
 BEAKER_vagrant_box_tree=$vagrant_boxes_dir \
-BEAKER_box__puppet="simpci/server-6.2.0-RC1.el7-CentOS-7.0.x86-64" \
+BEAKER_box__puppet="simpci/server-6.2.0-RC1.el7-CentOS-6.9.x86-64" \
   bundle exec rake beaker:suites[default]
 ```
 
@@ -116,15 +114,18 @@ SIMP.  It:
 
 1. Uploads a newer SIMP version's `.iso` file from the host filesystem into the
    puppetserver SUT.
+  - Uploads any `*.noarch.rpm` files from the local project's directory into
+    the puppet server's yum repository before running `unpack_dvd`
 2. Runs `unpack_dvd`
-3. Runs `puppet agent -t`
+3. Runs `yum update -y`
+4. Runs `puppet agent -t`
 
 Usage:
 
 ```sh
 BEAKER_vagrant_box_tree=$vagrant_boxes_dir \
 BEAKER_box__puppet="simpci/SIMP-6.1.0-0-Powered-by-CentOS-7.0-x86_64" \
-BEAKER_upgrade__new_simp_iso_path=$PWD\SIMP-6.2.0-RC1.el6-CentOS-6.9-x86_64.iso \
+BEAKER_upgrade__new_simp_iso_path=$PWD\SIMP-6.2.0-RC1.el6-CentOS-7.0-x86_64.iso 
   bundle exec rake beaker:suites[upgrade]
 ```
 
@@ -135,10 +136,10 @@ BEAKER_upgrade__new_simp_iso_path=$PWD\SIMP-6.2.0-RC1.el6-CentOS-6.9-x86_64.iso 
 Because the `upgrade` suite starts from an older version of SIMP, its
 requirements work a little differently from normal integration tests:
 
-| Environment variable                | Description                                                           |
-| ----------------------------------- | --------------------------------------------------------------------- |
-| `BEAKER_box__puppet`                | A Vagrant box tag from a _previous_ version of SIMP.                  |
-| `BEAKER_upgrade__new_simp_iso_path` | Path to an `.iso` file(s) for the current version of SIMP under test. |
+| Environment variable                | Description                                          |
+| ----------------------------------- | ---------------------------------------------------- |
+| `BEAKER_box__puppet`                | A Vagrant box tag from a _previous_ version of SIMP. |
+| `BEAKER_upgrade__new_simp_iso_path` | Path to the current version of SIMP's `.iso` file(s) |
 
 
 

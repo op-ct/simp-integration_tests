@@ -19,142 +19,146 @@ require 'spec_helper_acceptance'
 #
 # [u0]: https://github.com/simp/simp-doc/blob/8277eab/docs/user_guide/Upgrade_SIMP/General_Upgrade_Instructions.rst#incremental-updates
 # [u1]: https://github.com/simp/simp-doc/blob/aebb9f7/docs/contributors_guide/maintenance/iso_release_procedures/Pre_Release_Checklist.rst#verify-simp-server-rpm-upgrade
-#
-#
-# - https://simp.readthedocs.io/en/latest/contributors_guide/maintenance/iso_release_procedures/Pre_Release_Checklist.html#verify-simp-server-rpm-upgrade
-# - https://simp.readthedocs.io/en/master/user_guide/Upgrade_SIMP.html
-# - https://simp.readthedocs.io/en/master/user_guide/Upgrade_SIMP/General_Upgrade_Instructions.html
-# - https://simp.readthedocs.io/en/master/user_guide/Upgrade_SIMP/Version_Specific_Upgrade_Instructions.html
-# - https://simp.readthedocs.io/en/master/user_guide/HOWTO/Upgrade_SIMP.html
-#
 
 test_name 'General Upgrade: incremental upgrades'
 
 describe 'when an older version of SIMP' do
+  PUPPET_SERVER = find_at_most_one_host_with_role hosts, 'master'
+  ORIGINAL_SIMP_VERSION = on(
+    PUPPET_SERVER,
+    'cat /etc/simp/simp.version',
+    silent: true
+  ).stdout.strip
+
+  let(:puppetserver) { PUPPET_SERVER }
+
+  let(:original_simp_version) { ORIGINAL_SIMP_VERSION }
+
+  let(:puppet_agent_t) do
+    'set -o pipefail; puppet agent -t --detailed-exitcodes' \
+      ' |& tee /root/puppet-agent.log'
+  end
+
+  let(:module_path) do
+    on(
+      PUPPET_SERVER,
+      'puppet config print modulepath --section master'
+    ).stdout.split(':').first
+  end
+
   let(:iso_files) do
-    puppetserver      = find_at_most_one_host_with_role hosts, 'master'
-    host_os_version   = on(puppetserver, 'echo  "$(facter os.name)-$(facter os.release.major)"').stdout.strip
-    default_file_glob = "*#{host_os_version}*.iso"
-    if (iso_files = ENV['BEAKER_upgrade__new_simp_iso_path'])
-      isos = iso_files.to_s.split(%r{[:,]})
-    else
-      isos = Dir[default_file_glob]
-    end
-    return isos unless isos.empty?
-    fail <<-NO_ISO_FILE_ERROR.gsub(/^ {6}/,'')
-
-      --------------------------------------------------------------------------------
-      ERROR: No SIMP ISO(s) to upload for upgrade!
-      --------------------------------------------------------------------------------
-
-      This test requires at least one newer SIMP .iso
-
-      You can provide .iso files either by setting the environment variable:
-
-          BEAKER_upgrade__new_simp_iso_path=/path/to/iso-file.iso
-
-      Or:
-
-      Place a file that matches the glob '#{default_file_glob}'
-      into the top directory of this project.
-
-      --------------------------------------------------------------------------------
-
-    NO_ISO_FILE_ERROR
+    host_os_version = on(
+      PUPPET_SERVER,
+      'echo "$(facter os.name)-$(facter os.release.major)"'
+    ).stdout.strip
+    local_iso_files_matching "*#{host_os_version}*.iso"
   end
 
-  let(:puppetserver) { find_at_most_one_host_with_role hosts, 'master' }
-  let(:puppet_agent_t) { 'puppet agent -t --detailed-exitcodes' }
-  let(:host_simp_version) do
-    puppetserver = find_at_most_one_host_with_role hosts, 'master'
-    on(puppetserver, 'cat /etc/simp/simp.version').stdout.strip
-  end
-
-  #  Upgrade process derived from:
-  #
-  #   https://github.com/simp/simp-doc/blob/8277eab/docs/user_guide/Upgrade_SIMP/General_Upgrade_Instructions.rst#incremental-updates
-  #
   context 'when upgrading incrementally' do
     before :all do
-      # FIXME: this is a workaround for troubleshooting failed puppetservers.
-      # It should not be necesary under normal circumstances.
-      puppetserver = find_at_most_one_host_with_role hosts, 'master'
-      # try to prevent puppet agent from running
-      on puppetserver, 'puppet resource service puppet'
-      on puppetserver, 'puppet resource cron puppetagent ensure=absent'
-      on puppetserver, 'puppet resource service puppet'
-      on puppetserver, 'puppet resource service puppetserver'
-      on puppetserver, 'puppet resource service named'
-      @original_simp_version = on(puppetserver, 'cat /etc/simp/simp.version').stdout.strip
-      @puppetserver_fqdn = puppetserver.node_name
-      ### on puppetserver, 'puppet resource service puppetserver ensure=running'
-      ### on puppetserver, 'puppet resource service named ensure=running'
+      # (TODO: Remove this after SIMP-5385)
+      on PUPPET_SERVER, 'puppet resource cron puppetagent ensure=absent'
     end
 
     it 'uploads the ISO file(s)' do
       expect(iso_files).not_to be_empty
-
       on puppetserver, 'mkdir -p /var/isos'
-      iso_files.each do |iso_file|
-        puppetserver.do_rsync_to iso_file, "/var/isos/#{File.basename(iso_file)}"
+      iso_files.each do |file|
+        puppetserver.do_rsync_to file, "/var/isos/#{File.basename(file)}"
       end
     end
 
     it 'runs the unpack_dvd script' do
-      iso_files.each do |iso_file|
-        on puppetserver, "unpack_dvd /var/isos/#{File.basename(iso_file)}"
+      upload_rpms_to_yum_repo # inject rpms
+      iso_files.each do |file|
+        on puppetserver, "unpack_dvd /var/isos/#{File.basename(file)}"
       end
       on puppetserver, 'yum clean all; yum makecache'
+    end
 
-      # Specific 6.1.0->* upgrade instructions, due to SIMP-5383
-      if @original_simp_version.start_with? '6.1.'
-        puts "== SPECIAL 6.1 -> 6.2 upgrade instructions, due to SIMP-5383"
-        on puppetserver, 'echo exclude=puppet-agent >> /etc/yum.conf'
-        ##on puppetserver, 'yum -y install yum-versionlock'
-        ##on puppetserver, 'yum versionlock add puppet-agent'
+    it 'runs `yum update`' do
+      errata_for_simp5383__yum_excludes(:add)
+      on puppetserver, 'yum --rpmverbosity=warn -y update'
+    end
+
+    it 'runs `puppet agent -t` to apply changes' do
+      on puppetserver, "#{puppet_agent_t}.1", :acceptable_exit_codes => [2]
+
+      if errata_for_simp5383__yum_excludes(:remove)
+        # SIMP-5383: run agent an extra time to upgrade the agent
+        on puppetserver, "#{puppet_agent_t}.2", :acceptable_exit_codes => [2]
       end
+    end
 
-      pq_config =<<-PQCONFIG
-{
-    "puppetdb" : {
-      "server_urls" : "http://127.0.0.1:8138",
-      "cacert" : "/etc/puppetlabs/puppet/ssl/certs/ca.pem",
-      "cert" : "/etc/puppetlabs/puppet/ssl/certs/#{@puppetserver_fqdn}.pem",
-      "key" : "/etc/puppetlabs/puppet/ssl/private_keys/#{@puppetserver_fqdn}.pem"
-    }
-}
-PQCONFIG
+    it 'runs `puppet agent -t` idempotently' do
+      on puppetserver, "#{puppet_agent_t}.3", :acceptable_exit_codes => [0]
+    end
 
-      on puppetserver, 'mkdir -p .puppetlabs/client-tools/'
-      create_remote_file(puppetserver, "/root/.puppetlabs/client-tools/puppetdb.conf", pq_config)
-      on puppetserver, 'yum --verbose --rpmverbosity=warn -y update'
-      n=0
-      n += 1 ; on puppetserver, "#{puppet_agent_t} |& tee /root/puppet-agent.log.#{n}", :acceptable_exit_codes => [0,2,6]
-      pq_cmd = %Q[puppet query  "resources [certname,title]{ type = 'Class' and nodes { certname = '$(hostname -f)' and  deactivated is null and expired is null} order by certname }" | ruby -r json -r yaml -e "j=JSON.parse(STDIN.read); h = {}; j.each{|x| h[x['certname']]||= []; h[x['certname']] << x['title'] };  puts h.to_yaml" > puppetserver-classes.#{n}.yaml]
-      on puppetserver, pq_cmd
-      on puppetserver, 'puppet resource cron puppetagent ensure=absent'
-      on puppetserver, 'systemctl restart puppetserver'
-      20.times do
-        n += 1 ; on puppetserver, "#{puppet_agent_t} --noop |& tee /root/puppet-agent.log.#{n}", :acceptable_exit_codes => [0,2,6]
-        on puppetserver, 'puppet resource cron puppetagent ensure=absent'
-        pq_cmd = %Q[puppet query  "resources [certname,title]{ type = 'Class' and nodes { certname = '$(hostname -f)' and  deactivated is null and expired is null} order by certname }" | ruby -r json -r yaml -e "j=JSON.parse(STDIN.read); h = {}; j.each{|x| h[x['certname']]||= []; h[x['certname']] << x['title'] };  puts h.to_yaml" > puppetserver-classes.#{n}.yaml]
-        on puppetserver, pq_cmd
+    # Helper methods
+    # --------------------------------------------------------------------------
+
+    # based on the env var `BEAKER_upgrade__new_simp_iso_path` or a file glob,
+    # returns an Array of isos if found, or fails if not
+    def local_iso_files_matching(default_file_glob)
+      isos = if (iso_files = ENV['BEAKER_upgrade__new_simp_iso_path'])
+               iso_files.to_s.split(%r{[:,]})
+             else
+               Dir[default_file_glob]
+             end
+      return isos unless isos.empty?
+      raise <<-NO_ISO_FILE_ERROR.gsub(%r{^ {6}}, '')
+
+        --------------------------------------------------------------------------------
+        ERROR: No SIMP ISO(s) to upload for upgrade!
+        --------------------------------------------------------------------------------
+
+        This test requires at least one newer SIMP .iso
+
+        You can provide .iso files either by setting the environment variable:
+
+            BEAKER_upgrade__new_simp_iso_path=/path/to/iso-file.iso
+
+        Or:
+
+        Place a file that matches the glob '#{default_file_glob}'
+        into the top directory of this project.
+
+        --------------------------------------------------------------------------------
+
+      NO_ISO_FILE_ERROR
+    end
+
+    # Upload matching local RPMs into the puppetserver's yum repo
+    def upload_rpms_to_yum_repo(base_dir = '.', rpm_globs = ['*.noarch.rpm'])
+      expanded_globs = rpm_globs.map { |glob| File.join(base_dir, glob) }
+      local_rpms = Dir[*expanded_globs]
+      return if local_rpms.empty?
+      yum_dir = '/var/www/yum/SIMP/x86_64/'
+      local_rpms.each do |local_rpm|
+        scp_to(puppetserver, local_rpm, yum_dir)
+        on(
+          puppetserver,
+          "chmod 0644 #{yum_dir}/#{File.basename(local_rpm)}; " \
+          "chown root:apache #{yum_dir}/#{File.basename(local_rpm)}"
+        )
       end
-      on puppetserver, 'ps -ef | grep puppetserver'
-      on puppetserver, 'cat /etc/sysconfig/puppetserver'
-require 'pry'; binding.pry
+    end
 
-      # SIMP-5021 is not as solved as we thought, because the RPM install  but a workaround will be documented
-      #
-      # exit code 2 = puppet changes + something (because it's an upgrade)
-      # exit code 6 = puppet changes + puppetserver failed SIMP-5021, BUT systemd should immediately restarts itself
-      if r1.exit_code == 6
-        expect(r1.stderr).to match(/Puppet::Error: Cannot determine basic system flavour/)
-      end
+    # Errata methods
+    # --------------------------------------------------------------------------
+    # - errata_* methods execute workarounds or patches for known problems.
+    # - doesn't apply  check to see if it applies return nil if
+    # --------------------------------------------------------------------------
+    # Specific 6.1.0->* upgrade instructions, due to SIMP-5383
 
-      r2 = on puppetserver, 'puppet agent -t', :acceptable_exit_codes => [2]
-      r3 = on puppetserver, 'puppet resource service puppetserver'
-      expect(r3.stdout).to match(/ensure => 'running'/)
+    def errata_for_simp5383__yum_excludes(action)
+      return unless original_simp_version.start_with?('6.1.')
+      warn '== ERRATA (SIMP-5385): Special 6.1.0 -> * upgrade instructions:',
+           "==                       * #{action}: exclude=puppet-agent >> yum.conf`"
+      cmd = 'puppet resource file_line yum_exclude path=/etc/yum.conf ' \
+            "line='exclude=puppet-agent'"
+      cmd += ' ensure=absent' if action == :remove
+      on puppetserver, cmd
     end
   end
 end
