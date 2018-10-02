@@ -1,4 +1,8 @@
-[![License](http://img.shields.io/:license-apache-blue.svg)](http://www.apache.org/licenses/LICENSE-2.0.html) [![Build Status](https://travis-ci.org/simp/pupmod-simp-integration_tests.svg)](https://travis-ci.org/simp/pupmod-simp-integration_tests) [![SIMP compatibility](https://img.shields.io/badge/SIMP%20compatibility-6.*-orange.svg)](https://img.shields.io/badge/SIMP%20compatibility-6.*-orange.svg)
+[![License][license-badge]][license-url]
+[![Build Status][travis-badge]][travis-project]
+[![SIMP compatibility][simp-badge]][simp-badge]
+
+Automated integration tests for SIMP.
 
 #### Table of Contents
 <!-- vim-markdown-toc GFM -->
@@ -27,9 +31,7 @@
 
 ## Description
 
-Automated integration tests for SIMP.
-
-Uses Beaker suites from [`simp-beaker-helpers`][simp-beaker-helpers] and
+Automated integration tests for SIMP, using Beaker suites from [`simp-beaker-helpers`][simp-beaker-helpers] and
 Vagrant boxes built by [`simp-packer`][simp-packer].
 
 ### This is a SIMP project
@@ -88,7 +90,7 @@ An alternative method, if you only have a Vagrant `.box` + `.json` file but no
 directory tree set up:
 
 ```sh
-BEAKER_box__puppet="$direct_path_to/server-6.2.0-RC1.el7-CentOS-7.0.x86-64.json" \
+BEAKER_box_url__puppet="$direct_path_to/server-6.2.0-RC1.el7-CentOS-7.0.x86-64.json" \
   bundle exec rake beaker:suites
 ```
 
@@ -210,3 +212,10 @@ Please read our [Contribution Guide][simp-contrib].
 [vagrant]:                  https://www.vagrantup.com
 [virtualbox]:               https://www.virtualbox.org/wiki/Downloads
 [vb-extpack]:               https://www.virtualbox.org/wiki/Downloads#VirtualBox5.2.18OracleVMVirtualBoxExtensionPack
+
+<!-- badges and badge links -->
+[license-badge]:            http://img.shields.io/:license-apache-blue.svg
+[license-url]:              http://www.apache.org/licenses/LICENSE-2.0.html
+[simp-badge]:               https://img.shields.io/badge/SIMP%20compatibility-6.*-orange.svg
+[travis-badge]:             https://api.travis-ci.com/simp/simp-integration_tests.svg?branch=master
+[travis-project]:           https://travis-ci.com/simp/simp-integration_tests
