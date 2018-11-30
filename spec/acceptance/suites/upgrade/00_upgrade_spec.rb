@@ -21,82 +21,46 @@ require 'spec_helper_acceptance'
 #
 # - Any *.rpm files you want to inject into the yum repo prior to `unpack_dvd`
 
-test_name 'General Upgrade: incremental upgrades'
-
-describe 'when an older version of SIMP' do
-  PUPPET_SERVER = find_at_most_one_host_with_role hosts, 'master'
-  ORIGINAL_SIMP_VERSION = on(
-    PUPPET_SERVER,
-    'cat /etc/simp/simp.version',
-    silent: true
-  ).stdout.strip
-
-  let(:puppetserver) { PUPPET_SERVER }
-
-  let(:original_simp_version) { ORIGINAL_SIMP_VERSION }
-
-  let(:puppet_agent_t) do
-    'set -o pipefail; puppet agent -t --detailed-exitcodes' \
-      ' |& tee /root/puppet-agent.log'
-  end
-
-  let(:module_path) do
-    on(
-      PUPPET_SERVER,
-      'puppet config print modulepath --section master'
-    ).stdout.split(':').first
-  end
-
-  let(:iso_files) do
-    host_os_version = on(
-      PUPPET_SERVER,
-      'echo "$(facter os.name)-$(facter os.release.major)"'
-    ).stdout.strip
-    local_iso_files_matching "*#{host_os_version}*.iso"
-  end
-
-  context 'when upgrading incrementally' do
-    before :all do
-      # (TODO: Remove this after SIMP-5385)
-      on PUPPET_SERVER, 'puppet resource cron puppetagent ensure=absent'
+module Simp
+  module IntegrationTestHelpers
+    # @return [String] puppetserver
+    def puppetserver
+      @puppet_server_host ||= find_at_most_one_host_with_role(hosts, 'master')
     end
 
-    it 'uploads the ISO file(s)' do
-      expect(iso_files).not_to be_empty
-      on puppetserver, 'mkdir -p /var/isos'
-      iso_files.each do |file|
-        puppetserver.do_rsync_to file, "/var/isos/#{File.basename(file)}"
-      end
+    # Return (and remember) the host's SIMP version at the beginning of
+    #   the test.
+    #
+    # @param host [String] the host (puppetserver())
+    # @return [String] th host's original version of SIMP
+    #
+    # @note: Make sure to run this method at the beginning of the suite (before
+    #   upgrading) to make sure it locks onto the correct version!
+    #
+    def original_simp_version(host=puppetserver())
+      @original_simp_version ||= {}
+      @original_simp_version[host] ||= on(
+        host, 'cat /etc/simp/simp.version', silent: true
+      ).stdout.strip
     end
 
-    it 'runs the unpack_dvd script' do
-      upload_rpms_to_yum_repo # inject rpms
-      iso_files.each do |file|
-        on puppetserver, "unpack_dvd /var/isos/#{File.basename(file)}"
-      end
-      on puppetserver, 'yum clean all; yum makecache'
+    # Queries and returns the SIMP version of the given host.
+    #
+    # @param host [String] the host (puppetserver())
+    # @return [String] the puppetserver's original version of SIMP (when the
+    #    suite began)
+    def simp_version(host=puppetserver())
+      on(host, 'cat /etc/simp/simp.version', silent: true).stdout.strip
     end
 
-    it 'runs `yum update`' do
-      errata_for_simp5383__yum_excludes(:add)
-      on puppetserver, 'yum --rpmverbosity=warn -y update'
+    # Queries and returns the latest available SIMP version in yum
+    #
+    # @param host [String] the host (puppetserver())
+    # @return [String] the latest available SIMP version in yum
+    def latest_available_simp_version(host=puppetserver)
+      cmd = 'yum list simp | grep ^Available -A40 | grep "^simp\>"'
+      on(host, cmd , silent: true).stdout.lines.map(&:strip).last.split(/\s+/)[1]
     end
-
-    it 'runs `puppet agent -t` to apply changes' do
-      on puppetserver, "#{puppet_agent_t}.1", :acceptable_exit_codes => [2]
-
-      if errata_for_simp5383__yum_excludes(:remove)
-        # SIMP-5383: run agent an extra time to upgrade the agent
-        on puppetserver, "#{puppet_agent_t}.2", :acceptable_exit_codes => [2]
-      end
-    end
-
-    it 'runs `puppet agent -t` idempotently' do
-      on puppetserver, "#{puppet_agent_t}.3", :acceptable_exit_codes => [0]
-    end
-
-    # Helper methods
-    # --------------------------------------------------------------------------
 
     # based on the env var `BEAKER_upgrade__new_simp_iso_path` or a file glob,
     # returns an Array of isos if found, or fails if not
@@ -145,21 +109,181 @@ describe 'when an older version of SIMP' do
       end
     end
 
-    # Errata methods
-    # --------------------------------------------------------------------------
-    # - errata_* methods execute workarounds or patches for known problems.
-    # - doesn't apply  check to see if it applies return nil if
-    # --------------------------------------------------------------------------
-    # Specific 6.1.0->* upgrade instructions, due to SIMP-5383
+    def simp_errata(label, opts={})
+      result = nil
+      case label
+      when :before_yum_upgrade
+        #todo: summarize what errata was applied
+        result = errata_for_simp5383__yum_excludes(:add)
+        result = errata_for_simp_6_2_to_6_3_upgrade__pre_yum
+      when :after_yum_upgrade
+        result = errata_for_simp5383__yum_excludes(:remove)
+      else
+         raise "Unrecognized SIMP errata label: '#{label}'"
+      end
+      result
+    end
 
+
+    # Compare semver, and by default chop off non X.Y.Z suffixes like '-BETA.*'
+    def semver_match(expr, version, chop_suffix=true)
+      version = version.sub(/[+-].+$/,'') if chop_suffix
+      Gem::Dependency.new('', expr).match?('', version)
+    end
+
+    # Specific errata helpers
+    # --------------------------------------------------------------------------
+    # errata_* methods:
+    # - execute workarounds or patches for known problems.
+    # - must return nil immediately if it doesn't apply
+    # --------------------------------------------------------------------------
+
+    # Specific 6.1.0->* upgrade instructions, due to SIMP-5383
+    # @param action [:add,:remove] Whether to `:add` or `:remove` the line
+    #   `exclude=puppet-agent` from `/etc/yum.conf`
     def errata_for_simp5383__yum_excludes(action)
       return unless original_simp_version.start_with?('6.1.')
-      warn '== ERRATA (SIMP-5385): Special 6.1.0 -> * upgrade instructions:',
+      warn '','== ERRATA (SIMP-5385): Special 6.1.0 -> * upgrade instructions:',
            "==                       * #{action}: exclude=puppet-agent >> yum.conf`"
       cmd = 'puppet resource file_line yum_exclude path=/etc/yum.conf ' \
             "line='exclude=puppet-agent'"
       cmd += ' ensure=absent' if action == :remove
       on puppetserver, cmd
     end
+
+    def errata_for_simp_6_2_to_6_3_upgrade__pre_yum
+      return unless [
+        semver_match('< 6.3',  simp_version),
+        semver_match('>= 6.3', latest_available_simp_version)
+      ].all?
+      warn '','== ERRATA (SIMP-????): Special <6.3 -> >=6.3 upgrade instructions:',
+           "==                       * ???????????????????????????????"
+
+      # https://tickets.puppetlabs.com/browse/SERVER-1971
+      # (Also see: https://tickets.puppetlabs.com/browse/SERVER-1971?focusedCommentId=492050&page=com.atlassian.jira.plugin.system.issuetabpanels:comment-tabpanel#comment-492050)
+      on puppetserver, 'puppet resource file_line filewatch_fix ' \
+                       'path=/etc/puppetlabs/puppetserver/services.d/ca.cfg ' \
+                       'line=puppetlabs.trapperkeeper.services.watcher.filesystem-watch-service/filesystem-watch-service'
+
+      # SIMP-5340 again?
+      hocon='/opt/puppetlabs/puppet/bin/hocon'
+      file='/etc/puppetlabs/puppetserver/conf.d/web-routes.conf'
+      cfg='web-router-service."puppetlabs.trapperkeeper.services.metrics.metrics-service/metrics-webservice"'
+      value='"/metrics"'
+      on puppetserver, %Q[#{hocon} -f #{file} set '#{cfg}' '#{value}' ]
+
+    end
+  end
+end
+
+
+test_name 'General Upgrade: incremental upgrades'
+
+describe 'when an older version of SIMP' do
+  include Simp::IntegrationTestHelpers
+
+
+  before(:all) do
+    # record original simp version before upgrade
+    original_simp_version()
+    @hopefully_temporary_gpg_hack = ENV.fetch('HOPEFULLY_TEMPORARY_GPG_HACK','yes') == 'yes'
+  end
+
+  let(:puppet_agent_t) do
+    'set -o pipefail; puppet agent -t --detailed-exitcodes'
+  end
+
+  let(:module_path) do
+    on(
+      puppetserver,
+      'puppet config print modulepath --section master'
+    ).stdout.split(':').first
+  end
+
+  let(:iso_files) do
+    host_os_version = on(
+      puppetserver,
+      'echo "$(facter os.name)-$(facter os.release.major)"'
+    ).stdout.strip
+    local_iso_files_matching "*#{host_os_version}*.iso"
+  end
+
+  context 'when upgrading incrementally' do
+    before :all do
+      # (TODO: Remove this after SIMP-5385?)
+      on puppetserver, 'puppet resource cron puppetagent ensure=absent'
+    end
+
+    it 'uploads the ISO file(s)' do
+      expect(iso_files).not_to be_empty
+      on puppetserver, 'mkdir -p /var/isos'
+      iso_files.each do |file|
+        puppetserver.do_rsync_to file, "/var/isos/#{File.basename(file)}"
+      end
+    end
+
+    it 'runs the unpack_dvd script' do
+      upload_rpms_to_yum_repo # inject rpms
+      iso_files.each do |file|
+        on puppetserver, "unpack_dvd /var/isos/#{File.basename(file)}"
+      end
+      on puppetserver, 'yum clean all; yum makecache'
+    end
+
+    it 'runs `yum update`' do
+      simp_errata(:before_yum_upgrade)
+      if @hopefully_temporary_gpg_hack
+        warn '', '', '='*80
+        warn "HOPEFULLY_TEMPORARY_GPG_HACK=yes"
+        warn '='*80, '', ''
+        # FIXME: troubleshoot why this is happening:
+        #   - Is my SIMP 6.2.0 box bad?
+        #     - [ ] [in progress] rebuild from SIMP 6.2.0 EL6 ISO release
+        #     - [ ] test with freshly-built .box from SIMP 6.2.0 EL6 ISO release
+        #   - Does this only affect EL6?
+        #     - [ ] rebuild from SIMP 6.2.0 EL7 ISO release
+        #     - [ ] test with freshly-built .box from SIMP 6.2.0 EL7 ISO release
+        #   - Are dev GPG keys going in the wrong place?
+        #     - If so: does this only happen with _dev_ GPG keys?
+        require 'pry'; binding.pry
+        on puppetserver,
+           'cat /var/www/yum/CentOS/6.10/x86_64/RPM-GPG-KEY-SIMP-Dev ' \
+           '> /var/www/yum/SIMP-Dev/GPGKEYS/RPM-GPG-KEY-SIMP-Dev'
+      else
+        warn '', '', '='*80
+        warn " the HOPEFULLY_TEMPORARY_GPG_HACK=yes"
+        warn '='*80, '', ''
+      end
+
+      on puppetserver, 'yum --rpmverbosity=warn -y update || ' \
+        '{ printf "\n\n\n==== step failed - check for GPG problems ' \
+           '\n\nCheck the errors above for missing GPG keys--if found:\n' \
+           'Try running this beaker again env  HOPEFULLY_TEMPORARY_GPG_HACK=yes\n\n====\n\n\n"; exit 99; }'
+    end
+
+    it 'runs `puppet agent -t` to apply changes' do
+      agent_run_cmd = "#{puppet_agent_t} " + \
+         '|& tee /root/puppet-agent.log.01.yum-update'
+      on puppetserver, agent_run_cmd, :acceptable_exit_codes => [2]
+
+      # if there was errata for after the upgrade, run the agent an extra time to
+      # make sure everything upgraded cleanly before the next tests
+      if simp_errata(:after_yum_upgrade)
+        agent_run_cmd = "#{puppet_agent_t} " + \
+           '|& tee /root/puppet-agent.log.02.yum-update-post-errata'
+        on puppetserver, agent_run_cmd, :acceptable_exit_codes => [2]
+      end
+    end
+
+    it 'runs `puppet agent -t` idempotently' do
+      agent_run_cmd = "#{puppet_agent_t} " + \
+         '|& tee /root/puppet-agent.log.10.runs-idempotently'
+      on puppetserver, agent_run_cmd, :acceptable_exit_codes => [0]
+    end
+
+    # Helper methods
+    # --------------------------------------------------------------------------
+
+
   end
 end

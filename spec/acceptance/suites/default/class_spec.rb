@@ -13,6 +13,7 @@ describe 'integration_tests class' do
 
   context 'when there no parameters are changed' do
     it 'works with no errors' do
+require 'pry'; binding.pry
       apply_manifest(manifest, :catch_failures => true)
     end
 
