@@ -206,6 +206,8 @@ GEM
     pry-doc (0.13.4)
       pry (~> 0.11)
       yard (~> 0.9.11)
+    pry-reload (0.1)
+      rb-inotify (~> 0.9.7)
     puppet (4.10.12)
       facter (> 2.0, < 4)
       gettext-setup (>= 0.10, < 1)
@@ -225,6 +227,8 @@ GEM
       websocket (~> 1.0)
     rainbow (3.0.0)
     rake (12.3.1)
+    rb-inotify (0.9.10)
+      ffi (>= 0.5.0, < 2)
     rb-readline (0.5.5)
     rbvmomi (1.13.0)
       builder (~> 3.0)
@@ -325,6 +329,7 @@ DEPENDENCIES
   github-markup
   pry
   pry-doc
+  pry-reload
   puppet (~> 4.0)
   puppetlabs_spec_helper
   rake
@@ -339,4 +344,4 @@ DEPENDENCIES
   yard
 
 BUNDLED WITH
-   1.16.3
+   1.17.1

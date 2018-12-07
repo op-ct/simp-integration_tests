@@ -1,8 +1,10 @@
 require 'spec_helper_acceptance'
 
-test_name 'integration_tests class'
+test_name 'puppet apply smoke test'
 
-describe 'integration_tests class' do
+# This smoke test establishes that the local puppet installation works before
+# attempting
+describe 'local puppet commands work (smoke tests)' do
   let(:manifest) do
     <<-MANIFEST
       file{ '/root/.beaker-suites.smoke_test.file':
@@ -11,9 +13,8 @@ describe 'integration_tests class' do
     MANIFEST
   end
 
-  context 'when there no parameters are changed' do
+  context 'when running `puppet apply`' do
     it 'works with no errors' do
-require 'pry'; binding.pry
       apply_manifest(manifest, :catch_failures => true)
     end
 
@@ -24,6 +25,12 @@ require 'pry'; binding.pry
     it 'creates the smoke test file' do
       puppetserver = find_at_most_one_host_with_role hosts, 'master'
       on puppetserver, 'grep Beaker /root/.beaker-suites.smoke_test.file'
+    end
+  end
+
+  context 'when running `puppet describe`' do
+    it 'works with no errors' do
+      on puppetserver, 'puppet describe cron'
     end
   end
 end

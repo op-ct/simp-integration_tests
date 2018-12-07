@@ -27,6 +27,7 @@ group :development do
   gem 'travish'
   gem 'pry'
   gem 'pry-doc'
+  gem 'pry-reload'
 end
 
 group :system_tests do

@@ -1,3 +1,21 @@
+* Fri Dec 07 2018 Chris Tessmer <chris.tessmer@onyxpoint.com> - 0.3.0-0
+
+- Added
+  - Support for SIMP 6.3.0
+  - New helper modules under `spec/acceptance/support/lib/`:
+    - Simp::IntegrationTest::Helpers
+      - Available to all suites (via `spec_helper_acceptance.rb`)
+    - Simp::IntegrationTest::ErrataHelpers
+      - Provides `simp_errata()` method to check for errata conditions and
+        apply fixes for them
+    - Simp::IntegrationTest::UpgradeHelpers
+  - In `default` suite:
+    - New test `puppet agent runs work`
+- Changed
+  - In `default` suite:
+    - "integration_tests class" test renamed to "puppet apply smoke test"
+
+
 * Fri Sep 28 2018 Chris Tessmer <chris.tessmer@onyxpoint.com> - 0.2.0-0
 
 - Added

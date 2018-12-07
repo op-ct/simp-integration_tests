@@ -29,12 +29,12 @@ HOSTS:
     vb_gui: false
     synced_folder: disabled
 CONFIG:
-  epel_url: http://192.168.103.7  # don't use internet for initial yum
-  add_el_extras: false            # don't add "extra packages" for EPEL
-  type:      simp                 # It's not 'pe' or 'aio'
-  nfs_server: none
-  consoleport: 443
-  log_level: debug
+  epel_url:      http://192.168.103.7  # don't use internet for initial yum
+  add_el_extras: false                 # don't add "extra packages" for EPEL
+  type:          simp                  # It's not 'pe' or 'aio'
+  nfs_server:    none
+  consoleport:   443
+  log_level:     debug
 
   # Turns on `--natdnshostresolver1 on` and `--natdnsproxy1 on`
   #   See: https://www.virtualbox.org/manual/ch09.html#nat-adv-dns
